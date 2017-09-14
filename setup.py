@@ -9,10 +9,9 @@ setup(name='gcn',
       url='https://tkipf.github.io',
       download_url='https://github.com/tkipf/gcn',
       license='MIT',
-      install_requires=['numpy',
-                        'tensorflow',
-                        'networkx',
-                        'scipy'
-                        ],
       package_data={'gcn': ['README.md']},
       packages=find_packages())
+#install_requires=['numpy',
+#'networkx'],
+#'tensorflow',
+#'scipy'
