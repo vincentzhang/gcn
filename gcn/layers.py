@@ -1,5 +1,6 @@
 from gcn.inits import *
 import tensorflow as tf
+import pdb
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
@@ -20,6 +21,7 @@ def get_layer_uid(layer_name=''):
 
 def sparse_dropout(x, keep_prob, noise_shape):
     """Dropout for sparse tensors."""
+    #import pdb;pdb.set_trace()
     random_tensor = keep_prob
     random_tensor += tf.random_uniform(noise_shape)
     dropout_mask = tf.cast(tf.floor(random_tensor), dtype=tf.bool)
@@ -52,7 +54,7 @@ class Layer(object):
     """
 
     def __init__(self, **kwargs):
-        allowed_kwargs = {'name', 'logging'}
+        allowed_kwargs = {'name', 'logging', 'batch'}
         for kwarg in kwargs.keys():
             assert kwarg in allowed_kwargs, 'Invalid keyword argument: ' + kwarg
         name = kwargs.get('name')
@@ -128,6 +130,9 @@ class Dense(Layer):
 
         return self.act(output)
 
+#def f1(): print("rank 2"); return 2
+#def f2(): print("rank 3"); return 3
+
 
 class GraphConvolution(Layer):
     """Graph convolution layer."""
@@ -135,6 +140,10 @@ class GraphConvolution(Layer):
                  sparse_inputs=False, act=tf.nn.relu, bias=False,
                  featureless=False, **kwargs):
         super(GraphConvolution, self).__init__(**kwargs)
+        if 'batch' in kwargs.keys():
+            self.batch_mode = True
+        else:
+            self.batch_mode = False
 
         if dropout:
             self.dropout = placeholders['dropout']
@@ -151,38 +160,93 @@ class GraphConvolution(Layer):
         self.num_features_nonzero = placeholders['num_features_nonzero']
 
         with tf.variable_scope(self.name + '_vars'):
-            for i in range(len(self.support)):
-                self.vars['weights_' + str(i)] = glorot([input_dim, output_dim],
-                                                        name='weights_' + str(i))
+            if not self.batch_mode:
+                for i in range(len(self.support)):
+                    #pdb.set_trace()
+                    self.vars['weights_' + str(i)] = glorot([input_dim, output_dim],
+                                                            name='weights_' + str(i))
+            else:
+                    self.vars['weights_0'] = glorot([input_dim, output_dim],
+                                                            name='weights_0')
+
             if self.bias:
                 self.vars['bias'] = zeros([output_dim], name='bias')
 
         if self.logging:
             self._log_vars()
+        self.tmp = None
+
 
     def _call(self, inputs):
-        x = inputs
-
+        # check the rank of inputs
+        #tf.cond(tf.equal(tf.rank(x), tf.constant(2)), print("Rank is 2"), print("Rank is something else"))
+        #r = tf.cond(tf.equal(tf.rank(x), 2), f1, f2)
+        # inputs is a list of features
+        #for x in inputs:
+        #input_shape = inputs.get_shape().as_list()
+        #input_shape = inputs.get_shape()
+        #input_batch = True if len(input_shape) != 2 else False
+        #tf.Print(inputs, [inputs.get_shape().as_list()], "input shape: ")
+        #print("support: ", self.support[0].get_shape())
+        pdb.set_trace()
         # dropout
-        if self.sparse_inputs:
-            x = sparse_dropout(x, 1-self.dropout, self.num_features_nonzero)
-        else:
-            x = tf.nn.dropout(x, 1-self.dropout)
-
-        # convolve
-        supports = list()
-        for i in range(len(self.support)):
-            if not self.featureless:
-                pre_sup = dot(x, self.vars['weights_' + str(i)],
-                              sparse=self.sparse_inputs)
+        if not isinstance(inputs, list):
+            print("input is single image")
+            x = inputs
+            if self.sparse_inputs:
+                x = sparse_dropout(x, 1-self.dropout, self.num_features_nonzero)
             else:
-                pre_sup = self.vars['weights_' + str(i)]
-            support = dot(self.support[i], pre_sup, sparse=True)
-            supports.append(support)
-        output = tf.add_n(supports)
+                x = tf.nn.dropout(x, 1-self.dropout)
 
-        # bias
-        if self.bias:
-            output += self.vars['bias']
+            # convolve
+            supports = list()
+            for i in range(len(self.support)):
+                if not self.featureless:
+                    #pdb.set_trace()
+                    pre_sup = dot(x, self.vars['weights_' + str(i)],
+                                  sparse=self.sparse_inputs)
+                else:
+                    #pdb.set_trace()
+                    pre_sup = self.vars['weights_' + str(i)]
+                support = dot(self.support[i], pre_sup, sparse=True)
+                supports.append(support)
+            output = tf.add_n(supports) # element-wise sum of tensor
+            # bias
+            if self.bias:
+                output += self.vars['bias']
+            return self.act(output)
+        else:
+            # if batch
+            # take a list of input, return a list of output
+            print("input is batch image")
+            output_list = []
+            for i in range(len(inputs)):
+                x = inputs[i]
+                if self.sparse_inputs:
+                    x = sparse_dropout(x, 1-self.dropout, self.num_features_nonzero[i])
+                else:
+                    x = tf.nn.dropout(x, 1-self.dropout)
 
-        return self.act(output)
+                # convolve
+                supports = list()
+                #for i in range(len(self.support)):
+                for i in range(1):
+                    if not self.featureless:
+                        #pdb.set_trace()
+                        pre_sup = dot(x, self.vars['weights_' + str(i)],
+                                      sparse=self.sparse_inputs)
+                    else:
+                        #pdb.set_trace()
+                        pre_sup = self.vars['weights_' + str(i)]
+                    support = dot(self.support[i], pre_sup, sparse=True)
+                    supports.append(support)
+                output = tf.add_n(supports) # element-wise sum of tensor
+                # bias
+                if self.bias:
+                    output += self.vars['bias']
+                output_list.append(output)
+            ret_output_list = []
+            for output in output_list:
+                ret_output_list.append(self.act(output))
+            return ret_output_list
+

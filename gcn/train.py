@@ -6,11 +6,15 @@ import tensorflow as tf
 
 from gcn.utils import *
 from gcn.models import GCN, MLP
-
+from tensorflow.python import debug as tf_debug
+import sys
+sys.path.append('.')
+#import pdb;pdb.set_trace()
 # Set random seed
 seed = 123
 np.random.seed(seed)
 tf.set_random_seed(seed)
+import pdb
 
 # Settings
 flags = tf.app.flags
@@ -27,9 +31,9 @@ flags.DEFINE_integer('max_degree', 3, 'Maximum Chebyshev polynomial degree.')
 
 # Load data
 adj, features, y_train, y_val, y_test, train_mask, val_mask, test_mask = load_data(FLAGS.dataset)
-
 # Some preprocessing
 features = preprocess_features(features)
+import pdb;pdb.set_trace()
 if FLAGS.model == 'gcn':
     support = [preprocess_adj(adj)]
     num_supports = 1
@@ -46,21 +50,24 @@ else:
     raise ValueError('Invalid argument for model: ' + str(FLAGS.model))
 
 # Define placeholders
+    #'features': tf.sparse_placeholder(tf.float32, shape=tf.constant(features[2], dtype=tf.int64)),
 placeholders = {
-    'support': [tf.sparse_placeholder(tf.float32) for _ in range(num_supports)],
-    'features': tf.sparse_placeholder(tf.float32, shape=tf.constant(features[2], dtype=tf.int64)),
-    'labels': tf.placeholder(tf.float32, shape=(None, y_train.shape[1])),
-    'labels_mask': tf.placeholder(tf.int32),
-    'dropout': tf.placeholder_with_default(0., shape=()),
-    'num_features_nonzero': tf.placeholder(tf.int32)  # helper variable for sparse dropout
+    'support': [tf.sparse_placeholder(tf.float32, name="support") for _ in range(num_supports)],
+    'features': tf.sparse_placeholder(tf.float32, shape=np.array(features[2], dtype=np.int64), name="features"),
+    'labels': tf.placeholder(tf.float32, shape=(None, y_train.shape[1]), name="labels"),
+    'labels_mask': tf.placeholder(tf.int32, name="labels_mask"),
+    'dropout': tf.placeholder_with_default(0., shape=(), name="dropout"),
+    'num_features_nonzero': tf.placeholder(tf.int32, name="num_features_nonzero")  # helper variable for sparse dropout
 }
 
 # Create model
 model = model_func(placeholders, input_dim=features[2][1], logging=True)
 
 # Initialize session
-sess = tf.Session()
-
+config = tf.ConfigProto()
+config.gpu_options.allow_growth=True
+sess = tf.Session(config=config)
+#sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
 # Define model evaluation function
 def evaluate(features, support, labels, mask, placeholders):
@@ -69,6 +76,10 @@ def evaluate(features, support, labels, mask, placeholders):
     outs_val = sess.run([model.loss, model.accuracy], feed_dict=feed_dict_val)
     return outs_val[0], outs_val[1], (time.time() - t_test)
 
+merged_summary_op = tf.summary.merge_all()
+train_dir = './logs/'
+summary_writer = tf.summary.FileWriter(train_dir, sess.graph)
+global_step = tf.Variable(0, dtype=tf.int32, trainable=False)
 
 # Init variables
 sess.run(tf.global_variables_initializer())
@@ -84,7 +95,11 @@ for epoch in range(FLAGS.epochs):
     feed_dict.update({placeholders['dropout']: FLAGS.dropout})
 
     # Training step
-    outs = sess.run([model.opt_op, model.loss, model.accuracy], feed_dict=feed_dict)
+    #import pdb;pdb.set_trace()
+    outs = sess.run([model.opt_op, model.loss, model.accuracy, merged_summary_op], feed_dict=feed_dict)
+    summary_writer.add_summary(outs[-1], global_step.eval(sess))
+    pdb.set_trace()
+    #outs = sess.run([model.opt_op, ], feed_dict=feed_dict)
 
     # Validation
     cost, acc, duration = evaluate(features, support, y_val, val_mask, placeholders)
